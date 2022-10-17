@@ -42,10 +42,10 @@ var NotValidInputError = errors.New("Not a valid input: map or slice")
 // Flatten generates a flat map from a nested one.  The original may include values of type map, slice and scalar,
 // but not struct.  Keys in the flat map will be a compound of descending map keys and slice iterations.
 // The presentation of keys is set by style.  A prefix is joined to each key.
-func Flatten(nested map[string]interface{}, prefix string, style SeparatorStyle) (map[string]interface{}, error) {
+func Flatten(nested map[string]interface{}, prefix string, style SeparatorStyle, flattenArrays bool) (map[string]interface{}, error) {
 	flatmap := make(map[string]interface{})
 
-	err := flatten(true, flatmap, nested, prefix, style)
+	err := flatten(true, flatmap, nested, prefix, style, flattenArrays)
 	if err != nil {
 		return nil, err
 	}
@@ -61,7 +61,7 @@ var isJsonMap = regexp.MustCompile(`^\s*\{`)
 // FlattenString generates a flat JSON map from a nested one.  Keys in the flat map will be a compound of
 // descending map keys and slice iterations.  The presentation of keys is set by style.  A prefix is joined
 // to each key.
-func FlattenString(nestedstr, prefix string, style SeparatorStyle) (string, error) {
+func FlattenString(nestedstr, prefix string, style SeparatorStyle, flattenArrays bool) (string, error) {
 	if !isJsonMap.MatchString(nestedstr) {
 		return "", NotValidJsonInputError
 	}
@@ -72,7 +72,7 @@ func FlattenString(nestedstr, prefix string, style SeparatorStyle) (string, erro
 		return "", err
 	}
 
-	flatmap, err := Flatten(nested, prefix, style)
+	flatmap, err := Flatten(nested, prefix, style, flattenArrays)
 	if err != nil {
 		return "", err
 	}
@@ -85,33 +85,53 @@ func FlattenString(nestedstr, prefix string, style SeparatorStyle) (string, erro
 	return string(flatb), nil
 }
 
-func flatten(top bool, flatMap map[string]interface{}, nested interface{}, prefix string, style SeparatorStyle) error {
-	assign := func(newKey string, v interface{}) error {
-		switch v.(type) {
-		case map[string]interface{}, []interface{}:
-			if err := flatten(false, flatMap, v, newKey, style); err != nil {
-				return err
-			}
-		default:
-			flatMap[newKey] = v
-		}
-
-		return nil
+func flatten(top bool, flatMap map[string]interface{}, nested interface{}, prefix string, style SeparatorStyle, flattenArrays bool) error {
+	var assign func(flatMap map[string]interface{}, newKey string, v interface{}, style SeparatorStyle) error
+	if flattenArrays {
+		assign = assignDefault
+	} else {
+		assign = assignWithoutArrayFlattening
 	}
 
 	switch nested.(type) {
 	case map[string]interface{}:
 		for k, v := range nested.(map[string]interface{}) {
 			newKey := enkey(top, prefix, k, style)
-			assign(newKey, v)
+			assign(flatMap, newKey, v, style)
 		}
 	case []interface{}:
 		for i, v := range nested.([]interface{}) {
 			newKey := enkey(top, prefix, strconv.Itoa(i), style)
-			assign(newKey, v)
+			assign(flatMap, newKey, v, style)
 		}
 	default:
 		return NotValidInputError
+	}
+
+	return nil
+}
+
+func assignDefault(flatMap map[string]interface{}, newKey string, v interface{}, style SeparatorStyle) error {
+	switch v.(type) {
+	case map[string]interface{}, []interface{}:
+		if err := flatten(false, flatMap, v, newKey, style, true); err != nil {
+			return err
+		}
+	default:
+		flatMap[newKey] = v
+	}
+
+	return nil
+}
+
+func assignWithoutArrayFlattening(flatMap map[string]interface{}, newKey string, v interface{}, style SeparatorStyle) error {
+	switch v.(type) {
+	case map[string]interface{}:
+		if err := flatten(false, flatMap, v, newKey, style, false); err != nil {
+			return err
+		}
+	default:
+		flatMap[newKey] = v
 	}
 
 	return nil
